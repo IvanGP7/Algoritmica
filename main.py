@@ -139,7 +139,7 @@ def grid_execution():
             sample_points_y = y_vals
             
         print(f"N={n}: Est={est:.6f}, Error={error:.4e}, Time={elapsed:.6f}s")
-        return grid_estimations, grid_errors, grid_times, sample_points_x, sample_points_y
+    return grid_estimations, grid_errors, grid_times, sample_points_x, sample_points_y
 
 
 
@@ -178,7 +178,7 @@ def montecarlo_simple_execution():
 
     # Para ver la tabla final (opcional ahora, útil para el entregable)
     df_mc_simple = pd.DataFrame(mc_simple_results)
-    # print(df_mc_simple)
+    return df_mc_simple
 
 
 def montecarlo_sample_execution():
@@ -234,3 +234,171 @@ if __name__ == "__main__":
     grid_estimations, grid_errors, grid_times, sample_points_x, sample_points_y = grid_execution()
     mc_simple_results = montecarlo_simple_execution()
     df_mc_is = montecarlo_sample_execution()
+
+    # Asumiendo que mc_simple_results es una lista de diccionarios
+    df_mc_simple = pd.DataFrame(mc_simple_results)
+    
+    # df_mc_is ya viene como DataFrame según tu código
+    # Filtrar por los R=50 o R=100 (usaremos R=100 para ser más robustos en las gráficas comparativas)
+    R_PLOT = 100 
+    
+    # Filtrar datos para los gráficos comparativos
+    df_simple_plot = df_mc_simple[df_mc_simple['R'] == R_PLOT]
+    df_is_plot = df_mc_is[df_mc_is['R'] == R_PLOT]
+
+    # --- GRÁFICO 1: BRUTE FORCE FUNCTION + GRID ---
+    plt.figure(figsize=(10, 6))
+    
+    # Dibujar f(x) suave
+    x_smooth = np.linspace(0, 1, 1000)
+    y_smooth = 0.2 + np.exp(-((x_smooth - MU)**2) / (2 * SIGMA**2))
+    plt.plot(x_smooth, y_smooth, label='f(x) Real', color='blue')
+    
+    # Dibujar los puntos del Grid (usamos los de la ejecución con N=500 que guardaste)
+    # sample_points_x e y vienen de tu función grid_execution
+    plt.plot(sample_points_x, sample_points_y, 'r.', markersize=3, label='Grid Points', alpha=0.6)
+    plt.scatter(sample_points_x, np.zeros_like(sample_points_x), color='red', s=1, alpha=0.5, label='Midpoints on X')
+    
+    plt.title("BRUTE FORCE: FUNCTION + GRID")
+    plt.xlabel("x")
+    plt.ylabel("f(x)")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.show()
+
+    # --- GRÁFICO 2: BRUTE FORCE ERROR (Log-Log) ---
+    plt.figure(figsize=(10, 6))
+    plt.loglog(B_VALUES, grid_errors, 'o-', label='Grid Error')
+    plt.title("BRUTE FORCE: ERROR")
+    plt.xlabel("Function Evaluations (N)")
+    plt.ylabel("Absolute Error |I - I_est|")
+    plt.grid(True, which="both", alpha=0.4)
+    plt.legend()
+    plt.show()
+
+    # ... (Después de tus gráficos de Brute Force) ...
+
+    # ==========================================
+    # GRÁFICOS MONTE CARLO (CONVERGENCIA E HISTOGRAMAS)
+    # ==========================================
+    
+    # Configuración para las demos
+    B_DEMO = 15000  # Un buen número para ver la convergencia
+    
+    # --- 3. MC SIMPLE: CONVERGENCIA (Trayectoria de una sola ejecución) ---
+    # Generamos los datos paso a paso manualmente
+    x_rand = np.random.uniform(0, 1, B_DEMO)
+    y_vals = 0.2 + np.exp(-((x_rand - MU)**2) / (2 * SIGMA**2))
+    # Estimación acumulada: (y1, (y1+y2)/2, ...)
+    convergence_simple = np.cumsum(y_vals) / np.arange(1, B_DEMO + 1)
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(1, B_DEMO + 1), convergence_simple, label='MC Simple Trajectory')
+    plt.axhline(I_REAL, color='r', linestyle='--', label='Ground Truth')
+    plt.title(f"MC SIMPLE: CONVERGENCE (B={B_DEMO})")
+    plt.xlabel("n (samples)")
+    plt.ylabel("Cumulative Estimation")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.show()
+
+    # --- 4. MC SIMPLE: HISTOGRAMA ---
+    # Ejecutamos 100 veces para obtener 100 estimaciones y ver su distribución
+    # Reutilizamos tu función solve_mc_simple
+    estimates_hist, _ = solve_mc_simple(15000, 100, MU, SIGMA)
+    
+    plt.figure(figsize=(10, 6))
+    plt.hist(estimates_hist, bins=20, color='skyblue', edgecolor='black', alpha=0.7)
+    plt.axvline(I_REAL, color='red', linestyle='dashed', linewidth=2, label='Ground Truth')
+    plt.title("MC SIMPLE: HISTOGRAM (B=15000, R=100)")
+    plt.xlabel("Estimated Value")
+    plt.ylabel("Frequency")
+    plt.legend()
+    plt.show()
+
+    # --- 5. MC IMPORTANCE SAMPLING: CONVERGENCIA ---
+    plt.figure(figsize=(10, 6))
+    plt.axhline(I_REAL, color='r', linestyle='--', label='Ground Truth')
+    
+    # Generamos una trayectoria para cada Alpha (0.3 y 0.7)
+    from scipy import stats # Necesario para la normal truncada
+    a_trunc, b_trunc = (0 - MU) / SIGMA, (1 - MU) / SIGMA
+    trunc_norm = stats.truncnorm(a_trunc, b_trunc, loc=MU, scale=SIGMA)
+    
+    for alpha in [0.3, 0.7]:
+        # Muestreo mezcla (Mixture) paso a paso
+        # 1. Decidir origen de cada muestra (Binomial)
+        is_from_tn = np.random.binomial(1, alpha, B_DEMO)
+        
+        # 2. Generar valores
+        samples = np.zeros(B_DEMO)
+        # Donde is_from_tn es 1, usamos TN, donde es 0, usamos Uniforme
+        count_tn = np.sum(is_from_tn)
+        count_unif = B_DEMO - count_tn
+        
+        if count_tn > 0:
+            samples[is_from_tn == 1] = trunc_norm.rvs(size=count_tn)
+        if count_unif > 0:
+            samples[is_from_tn == 0] = np.random.uniform(0, 1, size=count_unif)
+            
+        # 3. Calcular Pesos
+        pdf_vals = (1 - alpha) * 1.0 + alpha * trunc_norm.pdf(samples)
+        weights = 1.0 / pdf_vals
+        
+        # 4. Evaluar f(x) * w(x)
+        f_vals = 0.2 + np.exp(-((samples - MU)**2) / (2 * SIGMA**2))
+        weighted_vals = f_vals * weights
+        
+        # 5. Acumular
+        convergence_is = np.cumsum(weighted_vals) / np.arange(1, B_DEMO + 1)
+        plt.plot(range(1, B_DEMO + 1), convergence_is, label=f'Alpha={alpha}')
+
+    plt.title(f"MC IMPORTANCE SAMPLING: CONVERGENCE (B={B_DEMO})")
+    plt.xlabel("n (samples)")
+    plt.ylabel("Cumulative Estimation")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.show()
+
+    # ==========================================
+    # GRÁFICOS COMPARATIVOS (RMSE)
+    # ==========================================
+    
+    # [cite_start]--- 6. RMSE vs AF (Log-Log) [cite: 50, 51] ---
+    plt.figure(figsize=(10, 6))
+    
+    # Grid (Fuerza Bruta)
+    plt.loglog(B_VALUES, grid_errors, 'o--', label='Grid Uniform', color='gray')
+    
+    # MC Simple
+    plt.loglog(df_simple_plot['B'], df_simple_plot['RMSE'], 'o-', label='MC Simple')
+    
+    # MC IS (Alpha 0.3)
+    data_is_03 = df_is_plot[df_is_plot['Alpha'] == 0.3]
+    plt.loglog(data_is_03['B'], data_is_03['RMSE'], 's-', label='MC IS (alpha=0.3)')
+    
+    # MC IS (Alpha 0.7)
+    data_is_07 = df_is_plot[df_is_plot['Alpha'] == 0.7]
+    plt.loglog(data_is_07['B'], data_is_07['RMSE'], '^-', label='MC IS (alpha=0.7)')
+    
+    plt.title("COMPARISON: RMSE vs Function Evaluations (Log-Log)")
+    plt.xlabel("Function Evaluations (B)")
+    plt.ylabel("RMSE")
+    plt.grid(True, which="both", alpha=0.4)
+    plt.legend()
+    plt.show()
+    
+    # [cite_start]--- 7. RMSE vs TIEMPO (Log-Log) [cite: 51] ---
+    plt.figure(figsize=(10, 6))
+    
+    plt.loglog(grid_times, grid_errors, 'o--', label='Grid Uniform', color='gray')
+    plt.loglog(df_simple_plot['Avg_Time'], df_simple_plot['RMSE'], 'o-', label='MC Simple')
+    plt.loglog(data_is_03['Avg_Time'], data_is_03['RMSE'], 's-', label='MC IS (alpha=0.3)')
+    plt.loglog(data_is_07['Avg_Time'], data_is_07['RMSE'], '^-', label='MC IS (alpha=0.7)')
+    
+    plt.title("COMPARISON: RMSE vs Execution Time (Log-Log)")
+    plt.xlabel("Time (seconds)")
+    plt.ylabel("RMSE")
+    plt.grid(True, which="both", alpha=0.4)
+    plt.legend()
+    plt.show()
